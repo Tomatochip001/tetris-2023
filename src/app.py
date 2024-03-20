@@ -7,6 +7,7 @@ from copy import deepcopy
 class App:
     def __init__(self):
         """ゲームの状態をリセット"""
+        self.FPS = 60
         self.number_of_times_played = 0
         self.game_width = 120
         self.game_height = 160
@@ -15,7 +16,6 @@ class App:
         self.initial_x = 100 # テトリミノが落ちてくるx座標
         self.initial_y = 0 # テトリミノが落ちてくるy座標
         self.hold_frame_size = 40
-        self.game_over = False
         self.cell_size = 10
         self.game_field = [[0 for _ in range(0, self.game_width, self.cell_size)] for _ in range(0, self.game_height, self.cell_size)]
         self.drop_speed = 45
@@ -32,9 +32,9 @@ class App:
         self.next_tetriminos = [self.create_new_tetrimino() for _ in range(7)] # 最初のテトリミノ + 6つの予測されたテトリミノ
         self.tetrimino = self.create_new_tetrimino() # self.tetrimino が今のテトリミノ
         self.order = ["1st", "2nd", "3rd", "4th", "5th", "6th"]
-        #if not self.score == 0:
-        #    self.best_score = 0
+        self.best_score = 0
         self.score = 0
+        self.before_score = 0
         self.start_time = time.time()
         self.state = "menu" # "menu", "play", "game_over"
         self.establishment_state = "playing" # "playing", "setting"
@@ -50,7 +50,7 @@ class App:
         self.select_music_name = self.music_name_to_display[self.selected_music_index]
         self.now_scale = 3
         self.lock_delay = 25
-
+        self.prev_state = "menu"
     
     def run(self):
         pyxel.init(self.width, self.height, title = "テトリス", display_scale= self.now_scale)
@@ -58,10 +58,27 @@ class App:
         pyxel.run(self.update, self.draw)
         pyxel.stop()
         
+    def init(self):
+        self.game_field = [[0 for _ in range(0, self.game_width, self.cell_size)] for _ in range(0, self.game_height, self.cell_size)]
+        self.drop_speed = 45
+        self.drop_counter = 0
+        self.hard_droped = False
+        self.held_tetrimino = None  # ホールド中のテトリミノを保持
+        self.hold_use_possible = False
+        self.hold_count = 0
+        self.score = 0
+        self.tetrimino_touched_bottom = False
+        self.frame_count = 0
+        self.tetriminos = []  # 画面上のテトリミノを保持するリスト
+        self.recent_tetriminos = []
+        self.next_tetriminos = [self.create_new_tetrimino() for _ in range(7)] # 最初のテトリミノ + 6つの予測されたテトリミノ
+        self.tetrimino = self.create_new_tetrimino()
     
     def reset_game(self):
         """ゲームの状態をリセット"""
-        self.__init__()
+        self.init()
+        self.prev_state = "menu"
+        self.state = "menu"
 
     def create_new_tetrimino(self):
         available_tetriminos = list(TETROMINOES.keys())
@@ -99,13 +116,16 @@ class App:
             self.select_music()
         elif self.state == "play":
             self.update_play()
-        if self.state == "game_over":
-            if self.before_score >= self.score:
-                self.best_score = self.score
-            self.before_score = self.score
+        elif self.state == "game_over":
             # QキーとRキーを同時に押すとゲームをリスタート
             if pyxel.btn(pyxel.KEY_Q) and pyxel.btn(pyxel.KEY_R):
                 self.reset_game()
+        elif self.state == "howto":
+            if pyxel.btnp(pyxel.KEY_H):
+                self.state = self.prev_state
+            elif pyxel.btn(pyxel.KEY_Q) and pyxel.btn(pyxel.KEY_R):
+                self.state = "play"
+                
     
     def sound_replace_on_off(self):
         # 音のon/offを切り替える
@@ -127,6 +147,10 @@ class App:
         self.speed_level = self.level_to_display[self.selected_speed_index]
         if pyxel.btnp(pyxel.KEY_SPACE):
             self.state = "select_music"
+            
+        if pyxel.btnp(pyxel.KEY_H):
+            self.prev_state = self.state
+            self.state = "howto"
     
     def select_music(self):
         # 曲の選択
@@ -151,30 +175,57 @@ class App:
         if pyxel.btnp(pyxel.KEY_SPACE):
             self.state = "play"
             self.tetrimino = self.create_new_tetrimino()
+            
+        if pyxel.btnp(pyxel.KEY_H):
+            self.prev_state = self.state
+            self.state = "howto"
     
     def draw(self):
         if  self.state == "menu":
             # メニュー画面
             pyxel.cls(0)
-            pyxel.text(100, 40, "TETRIS", pyxel.COLOR_RED)
-            pyxel.text(75, 60, "Press SPACE to start", pyxel.COLOR_WHITE)
-            pyxel.text(60, 80, "Select level with arrow key", pyxel.COLOR_LIME)
-            pyxel.text(88, 90, f"Level:{self.speed_level}", pyxel.COLOR_YELLOW)
+            title = "TETRIS"
+            pyxel.text(self.width // 2 - len(title) * 2, 38, title, pyxel.COLOR_RED)
+            guide_next = "Press SPACE to start"
+            pyxel.text(self.width // 2 - len(guide_next) * 2, 56, guide_next, pyxel.COLOR_WHITE)
+            guide_level = "Select level with arrow key"
+            pyxel.text(self.width // 2 - len(guide_level) * 2, 70, guide_level, pyxel.COLOR_LIME)
+            pyxel.text(172, 69, "^", pyxel.COLOR_LIME)
+            pyxel.text(172, 71, "|", pyxel.COLOR_LIME)
+            pyxel.text(180, 72, "v", pyxel.COLOR_LIME)
+            pyxel.text(180, 69, "|", pyxel.COLOR_LIME)
             
-        
+            level_text = f"Level: {self.speed_level}"
+            pyxel.text(self.width // 2 - len(level_text) * 2, 90, level_text, pyxel.COLOR_YELLOW)
+            guide_howto = "Press H key to see how to play"
+            pyxel.text(self.width // 2 - len(guide_howto) * 2, 110, guide_howto, pyxel.COLOR_WHITE)
+            
         elif self.state == "select_music":
             """曲の選択画面"""
             pyxel.cls(0)
-            pyxel.text(60, 40, "Select music with arrow key", pyxel.COLOR_WHITE)
+            guide_music = "Select music with arrow key"
+            pyxel.text(self.width // 2 - len(guide_music) * 2, 38, guide_music, pyxel.COLOR_WHITE)
+            pyxel.text(170, 37, "^", pyxel.COLOR_WHITE)
+            pyxel.text(170, 39, "|", pyxel.COLOR_WHITE)
+            pyxel.text(178, 40, "v", pyxel.COLOR_WHITE)
+            pyxel.text(178, 37, "|", pyxel.COLOR_WHITE)
+            
             if not self.music_number == 1:
-               pyxel.text(40, 70, "If you don't want to hear the sound,", pyxel.COLOR_ORANGE)
-               pyxel.text(67, 80, "press the up arrow key", pyxel.COLOR_ORANGE)
+                pyxel.text(40, 70, "If you don't want to hear the sound,", pyxel.COLOR_ORANGE)
+                pyxel.text(67, 80, "press the up arrow key", pyxel.COLOR_ORANGE)
             if self.music_number == 0:
-                pyxel.text(55, 60, f"{self.select_music_name}", pyxel.COLOR_ORANGE)
+                music_name = self.select_music_name
+                pyxel.text(self.width // 2 - len(music_name) * 2, 60, music_name, pyxel.COLOR_ORANGE)
             elif self.music_number == 1:
-                pyxel.text(77, 60, "Under development", pyxel.COLOR_ORANGE)
-                pyxel.text(55, 70, "Please wait until completion", pyxel.COLOR_ORANGE)
-            pyxel.text(70, 90, "Press SPACE to start", pyxel.COLOR_RED)
+                under_development = "Under development"
+                guide_under_development = "Please wait until completion"
+                pyxel.text(self.width // 2 - len(under_development) * 2, 60, under_development, pyxel.COLOR_ORANGE)
+                pyxel.text(self.width // 2 - len(guide_under_development) * 2, 70, guide_under_development, pyxel.COLOR_ORANGE)
+            
+            start_colors = [pyxel.COLOR_RED, pyxel.COLOR_BLACK]
+            guide_start = "Press SPACE to start"
+            pyxel.text(self.width//2 - len(guide_start) * 2, 98, guide_start, pyxel.frame_count*3//self.FPS % 2)
+
         elif self.state == "play":
             """ゲームの状態が "play" のときだけ実行する"""
             pyxel.cls(0)
@@ -188,14 +239,32 @@ class App:
             self.draw_score_and_time_and_speed_info()
             self.draw_next_tetriminos()
             self.draw_next_tetoriminos_order()
+            
         elif self.state == "game_over":
             """ゲームオーバー時の画面表示"""
             pyxel.cls(0)
-            pyxel.text(self.width // 2 -20, self.height // 2 - 20, "Game Over!", pyxel.COLOR_RED)
+            pyxel.text(self.width // 2 - 20, self.height // 2 - 24, "Game Over!", pyxel.COLOR_RED)
             pyxel.text(self.width // 2 - 40, self.height // 2 - 10, "Press Q+R Restart",pyxel.COLOR_WHITE)
-            pyxel.text(self.width // 2 - 40, self.height // 2, "Your score:" + str(self.score), pyxel.COLOR_ORANGE)
-            pyxel.text(self.width // 2 - 40, self.height // 2, "Your best score:" + str(self.best_score), pyxel.COLOR_LIGHT_BLUE)
-    
+            pyxel.text(self.width // 2 - 40, self.height // 2 + 4, "Your score:" + str(self.score), pyxel.COLOR_ORANGE)
+            pyxel.text(self.width // 2 - 40, self.height // 2 + 18, "Your best score:" + str(self.best_score), pyxel.COLOR_LIGHT_BLUE)
+
+        elif self.state == "howto":
+            """遊び方の説明画面"""
+            pyxel.cls(0)
+            h = 30
+            pyxel.text(20, h - 10, "How to play", pyxel.COLOR_RED)
+            pyxel.line(20, h, 100, h, pyxel.COLOR_RED)
+            pyxel.text(30, h + 14, "-  Arrow keys to move",pyxel.COLOR_WHITE)
+            pyxel.text(30, h + 14 * 2, "-  Space key to hard drop", pyxel.COLOR_WHITE)
+            pyxel.text(30, h + 14 * 3, "-  N key to hold/keep tetrimino", pyxel.COLOR_WHITE)
+            pyxel.text(30, h + 14 * 4, "-  RShift key to rotate right", pyxel.COLOR_WHITE)
+            pyxel.text(30, h + 14 * 5, "-  / key to rotate left", pyxel.COLOR_WHITE)
+            pyxel.text(30, h + 14 * 6, "-  Press Q+R to restart", pyxel.COLOR_WHITE)
+            
+            guide = "Press H key to go back"
+            guide_colors = [pyxel.COLOR_YELLOW, pyxel.COLOR_BLACK]
+            pyxel.text(self.width - len(guide) * 4 - 40, self.height - 20, guide, pyxel.frame_count*3//self.FPS % 2)
+            
     def draw_next_tetriminos(self):
         # 次の6つのテトリミノを画面の右側に描画
         for i, tetorimino in enumerate(self.next_tetriminos):
@@ -250,11 +319,16 @@ class App:
     def update_play(self):
         
         if self.is_game_over():
-            self.game_over = True
+            if self.best_score < self.score:
+                self.best_score = self.score
         else:
             # pyxel.stop()
             pass
         
+        # 遊び方の説明画面に移動
+        if pyxel.btnp(pyxel.KEY_H):
+            self.prev_state = self.state
+            self.state = "howto"
         
         # テトリミノの下矢印キーとスペースキーの落下処理
         self.drop_counter += 1
